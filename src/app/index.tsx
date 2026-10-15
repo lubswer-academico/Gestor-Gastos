@@ -33,13 +33,12 @@ export default function HomeScreen() {
 
             <MonthlyHeader />
 
-  
-{/* Mientras se leen los datos guardados se muestra un indicador;
-                sin esto se veria un instante el mensaje de "no hay gastos" */}
             {isLoading ? (
               <View style={styles.emptyState}>
                 <ActivityIndicator size="large" color={LiquidGlassColors.primary} />
               </View>
+
+
             ) : expenses.length === 0 ? (
               /* Si no hay gastos este mes mostramos un mensaje en vez de la lista */
               <View style={styles.emptyState}>
