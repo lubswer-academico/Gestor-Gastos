@@ -1,19 +1,63 @@
 import { useState } from 'react';
-import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  FlatList,
+  Modal,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  Image,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
+import { BlurView } from 'expo-blur';
+
 import { MonthlyHeader } from '@/components/MonthlyHeader';
 import { ExpenseItem } from '@/components/ExpenseItem';
 import { AddExpenseModal } from '@/components/AddExpenseModal';
 import { useExpenses } from '@/context/ExpenseContext';
 import { LiquidGlassColors, Spacing } from '@/constants/theme';
+import { Expense } from '@/types/expense';
 
-// Pantalla principal: total del mes, lista de gastos y el boton + para agregar
 export default function HomeScreen() {
-  const { getCurrentMonthExpenses, isLoading  } = useExpenses();
+  const { expenses: allExpenses, getCurrentMonthExpenses, isLoading, deleteExpense } = useExpenses();
   const [modalVisible, setModalVisible] = useState(false);
-  const expenses = getCurrentMonthExpenses();
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+  const [viewReceiptUri, setViewReceiptUri] = useState<string | null>(null);
+
+  // Filtro de alcance: 'all' (todos los gastos históricos) o 'current' (solo este mes)
+  const [scope, setScope] = useState<'all' | 'current'>('all');
+
+  // Ordenamiento: 'recent' (más recientes) o 'highest' (más altos)
+  const [sortBy, setSortBy] = useState<'recent' | 'highest'>('recent');
+
+  // Si scope es 'all', toma absolutamente todos los gastos guardados en SQLite
+  const rawExpenses = scope === 'all' ? allExpenses : getCurrentMonthExpenses();
+
+  // Aplicación del ordenamiento
+  const expenses = [...rawExpenses].sort((a, b) => {
+    if (sortBy === 'highest') {
+      return b.amount - a.amount; // Orden descendente por monto
+    }
+    return new Date(b.date).getTime() - new Date(a.date).getTime(); // Orden cronológico
+  });
+
+  const handleOpenAdd = () => {
+    setEditingExpense(null);
+    setModalVisible(true);
+  };
+
+  const handleOpenEdit = (expense: Expense) => {
+    setEditingExpense(expense);
+    setModalVisible(true);
+  };
+
+  const handleCloseModal = () => {
+    setModalVisible(false);
+    setEditingExpense(null);
+  };
 
   return (
     <View style={styles.container}>
@@ -22,7 +66,7 @@ export default function HomeScreen() {
         colors={['#FFF5F9', '#FFE8F0', '#FFF9FC']}
         style={styles.gradient}
       >
-        {/* Circulos de color detras: dan algo que desenfocar a las tarjetas */}
+        {/* Circulos de color detras (DESIGN_SYSTEM) */}
         <View pointerEvents="none" style={[styles.orb, styles.orbPink]} />
         <View pointerEvents="none" style={[styles.orb, styles.orbOrange]} />
         <View pointerEvents="none" style={[styles.orb, styles.orbPurple]} />
@@ -33,19 +77,111 @@ export default function HomeScreen() {
 
             <MonthlyHeader />
 
+            {/* Controles de Filtros y Ordenamiento Liquid Glass */}
+            <View style={styles.filtersWrapper}>
+              {/* Fila 1: Filtro por Período */}
+              <View style={styles.chipsRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.sortChip,
+                    scope === 'all' && styles.sortChipActive,
+                  ]}
+                  onPress={() => setScope('all')}
+                >
+                  {scope === 'all' ? (
+                    <LinearGradient
+                      colors={[LiquidGlassColors.primary, LiquidGlassColors.secondary]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.sortChipGradient}
+                    >
+                      <Text style={styles.sortChipTextActive}>🌐 Todos los gastos</Text>
+                    </LinearGradient>
+                  ) : (
+                    <Text style={styles.sortChipText}>🌐 Todos los gastos</Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.sortChip,
+                    scope === 'current' && styles.sortChipActive,
+                  ]}
+                  onPress={() => setScope('current')}
+                >
+                  {scope === 'current' ? (
+                    <LinearGradient
+                      colors={[LiquidGlassColors.primary, LiquidGlassColors.secondary]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.sortChipGradient}
+                    >
+                      <Text style={styles.sortChipTextActive}>📅 Solo este mes</Text>
+                    </LinearGradient>
+                  ) : (
+                    <Text style={styles.sortChipText}>📅 Solo este mes</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              {/* Fila 2: Ordenamiento por Recientes o Más Altos */}
+              <View style={styles.chipsRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.sortChip,
+                    sortBy === 'recent' && styles.sortChipActive,
+                  ]}
+                  onPress={() => setSortBy('recent')}
+                >
+                  {sortBy === 'recent' ? (
+                    <LinearGradient
+                      colors={[LiquidGlassColors.primary, LiquidGlassColors.secondary]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.sortChipGradient}
+                    >
+                      <Text style={styles.sortChipTextActive}>⏰ Más recientes</Text>
+                    </LinearGradient>
+                  ) : (
+                    <Text style={styles.sortChipText}>⏰ Más recientes</Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.sortChip,
+                    sortBy === 'highest' && styles.sortChipActive,
+                  ]}
+                  onPress={() => setSortBy('highest')}
+                >
+                  {sortBy === 'highest' ? (
+                    <LinearGradient
+                      colors={[LiquidGlassColors.primary, LiquidGlassColors.secondary]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.sortChipGradient}
+                    >
+                      <Text style={styles.sortChipTextActive}>💰 Gastos más altos</Text>
+                    </LinearGradient>
+                  ) : (
+                    <Text style={styles.sortChipText}>💰 Gastos más altos</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+
             {isLoading ? (
               <View style={styles.emptyState}>
                 <ActivityIndicator size="large" color={LiquidGlassColors.primary} />
               </View>
-
-
             ) : expenses.length === 0 ? (
-              /* Si no hay gastos este mes mostramos un mensaje en vez de la lista */
               <View style={styles.emptyState}>
                 <Text style={styles.emptyIcon}>💸</Text>
-                <Text style={styles.emptyTitle}>No hay gastos registrados</Text>
+                <Text style={styles.emptyTitle}>No hay gastos para mostrar</Text>
                 <Text style={styles.emptyText}>
-                  Presiona el botón + para agregar tu primer gasto
+                  {scope === 'current'
+                    ? 'No tienes gastos en este mes. Cambia a "Todos los gastos" para ver meses anteriores o presiona +.'
+                    : 'Presiona el botón + para agregar tu primer gasto'}
                 </Text>
               </View>
             ) : (
@@ -53,7 +189,13 @@ export default function HomeScreen() {
                 data={expenses}
                 keyExtractor={(item) => item.id}
                 renderItem={({ item, index }) => (
-                  <ExpenseItem expense={item} index={index} />
+                  <ExpenseItem
+                    expense={item}
+                    index={index}
+                    onEdit={handleOpenEdit}
+                    onDelete={deleteExpense}
+                    onViewReceipt={(uri) => setViewReceiptUri(uri)}
+                  />
                 )}
                 contentContainerStyle={styles.listContent}
                 showsVerticalScrollIndicator={false}
@@ -61,10 +203,10 @@ export default function HomeScreen() {
             )}
           </View>
 
-          {/* Boton + de la esquina */}
+          {/* Boton + de la esquina (FAB) */}
           <TouchableOpacity
             style={styles.fab}
-            onPress={() => setModalVisible(true)}
+            onPress={handleOpenAdd}
             activeOpacity={0.8}
           >
             <LinearGradient
@@ -77,10 +219,49 @@ export default function HomeScreen() {
             </LinearGradient>
           </TouchableOpacity>
 
+          {/* Modal para Crear / Editar Gasto */}
           <AddExpenseModal
             visible={modalVisible}
-            onClose={() => setModalVisible(false)}
+            onClose={handleCloseModal}
+            expenseToEdit={editingExpense}
           />
+
+          {/* Modal con efecto Liquid Glass para visualizar Comprobante */}
+          <Modal
+            visible={Boolean(viewReceiptUri)}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setViewReceiptUri(null)}
+          >
+            <View style={styles.receiptModalOverlay}>
+              <BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} />
+              <View style={styles.receiptModalCard}>
+                <BlurView intensity={90} tint="light" style={styles.receiptModalBlur}>
+                  <Text style={styles.receiptModalTitle}>Comprobante / Factura</Text>
+                  {viewReceiptUri && (
+                    <Image
+                      source={{ uri: viewReceiptUri }}
+                      style={styles.receiptFullImage}
+                      resizeMode="contain"
+                    />
+                  )}
+                  <TouchableOpacity
+                    style={styles.closeReceiptButton}
+                    onPress={() => setViewReceiptUri(null)}
+                  >
+                    <LinearGradient
+                      colors={[LiquidGlassColors.primary, LiquidGlassColors.secondary]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.closeReceiptGradient}
+                    >
+                      <Text style={styles.closeReceiptText}>Cerrar</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </BlurView>
+              </View>
+            </View>
+          </Modal>
         </SafeAreaView>
       </LinearGradient>
     </View>
@@ -134,6 +315,44 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.three,
     textAlign: 'center',
   },
+  filtersWrapper: {
+    gap: Spacing.two,
+    marginBottom: Spacing.three,
+  },
+  chipsRow: {
+    flexDirection: 'row',
+    gap: Spacing.two,
+    justifyContent: 'center',
+  },
+  sortChip: {
+    borderRadius: Spacing.two,
+    backgroundColor: LiquidGlassColors.glassInput,
+    borderWidth: 1,
+    borderColor: LiquidGlassColors.glassBorder,
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sortChipActive: {
+    borderColor: 'transparent',
+  },
+  sortChipGradient: {
+    paddingVertical: Spacing.one + 2,
+    paddingHorizontal: Spacing.three,
+    borderRadius: Spacing.two,
+  },
+  sortChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: LiquidGlassColors.glassText,
+    paddingVertical: Spacing.one + 2,
+    paddingHorizontal: Spacing.three,
+  },
+  sortChipTextActive: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: LiquidGlassColors.glassTextLight,
+  },
   listContent: {
     paddingBottom: 100,
   },
@@ -185,5 +404,52 @@ const styles = StyleSheet.create({
     fontSize: 32,
     color: LiquidGlassColors.glassTextLight,
     fontWeight: '300',
+  },
+  receiptModalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.four,
+  },
+  receiptModalCard: {
+    width: '100%',
+    maxHeight: '85%',
+    borderRadius: Spacing.four,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: LiquidGlassColors.glassBorder,
+    backgroundColor: 'rgba(255, 255, 255, 0.45)',
+  },
+  receiptModalBlur: {
+    padding: Spacing.four,
+    alignItems: 'center',
+    gap: Spacing.three,
+    width: '100%',
+  },
+  receiptModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: LiquidGlassColors.glassText,
+  },
+  receiptFullImage: {
+    width: '100%',
+    height: 350,
+    borderRadius: Spacing.two,
+  },
+  closeReceiptButton: {
+    width: '100%',
+    borderRadius: Spacing.two,
+    overflow: 'hidden',
+  },
+  closeReceiptGradient: {
+    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.four,
+    borderRadius: Spacing.two,
+    alignItems: 'center',
+  },
+  closeReceiptText: {
+    color: LiquidGlassColors.glassTextLight,
+    fontSize: 15,
+    fontWeight: 'bold',
   },
 });

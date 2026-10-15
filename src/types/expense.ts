@@ -17,6 +17,7 @@ export interface Expense {
   category: Category;
   date: Date;
   description?: string;
+  receiptUri?: string; // Ruta local del comprobante o factura adjunta
 }
 
 // Mismo orden en que se muestran en el selector del modal

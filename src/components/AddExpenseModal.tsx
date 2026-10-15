@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Modal,
   StyleSheet,
@@ -10,63 +10,220 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  Image,
 } from 'react-native';
 import Animated, { FadeIn, SlideInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
-import { Category, CATEGORIES, CATEGORY_ICONS } from '@/types/expense';
+import * as ImagePicker from 'expo-image-picker';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+
+import { Category, CATEGORIES, CATEGORY_ICONS, Expense } from '@/types/expense';
 import { LiquidGlassColors, Spacing } from '@/constants/theme';
 import { useExpenses } from '@/context/ExpenseContext';
 
 interface AddExpenseModalProps {
   visible: boolean;
   onClose: () => void;
+  expenseToEdit?: Expense | null;
 }
 
-// Modal que sube desde abajo para registrar un gasto.
-// Para poder agregarlo hacen falta el monto y la categoria; la descripcion es opcional.
 export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({
   visible,
   onClose,
+  expenseToEdit,
 }) => {
-  const { addExpense } = useExpenses();
-  // El monto es string porque asi trabaja el TextInput; se pasa a numero al guardar
+  const { addExpense, updateExpense } = useExpenses();
+
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState<Category | null>(null);
   const [description, setDescription] = useState('');
-  
-const handleSubmit = async () => {
-    if (!amount || !category) return;
- 
+  const [date, setDate] = useState<Date>(new Date());
+  const [receiptUri, setReceiptUri] = useState<string | undefined>(undefined);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
+  // Estados para mensajes de error de validación
+  const [amountError, setAmountError] = useState<string | null>(null);
+  const [categoryError, setCategoryError] = useState<string | null>(null);
+
+  // Cuando se abre en modo edición, se precargan los campos
+  useEffect(() => {
+    if (expenseToEdit) {
+      setAmount(expenseToEdit.amount.toString());
+      setCategory(expenseToEdit.category);
+      setDescription(expenseToEdit.description || '');
+      setDate(new Date(expenseToEdit.date));
+      setReceiptUri(expenseToEdit.receiptUri);
+    } else {
+      resetForm();
+    }
+  }, [expenseToEdit, visible]);
+
+  const resetForm = () => {
+    setAmount('');
+    setCategory(null);
+    setDescription('');
+    setDate(new Date());
+    setReceiptUri(undefined);
+    setShowDatePicker(false);
+    setAmountError(null);
+    setCategoryError(null);
+  };
+
+  const handleClose = () => {
+    resetForm();
+    onClose();
+  };
+
+  /**
+   * Control 3.a: El monto solo acepta números y hasta 2 decimales.
+   * Normaliza la coma a punto decimal y valida con RegEx.
+   */
+  const handleAmountChange = (text: string) => {
+    const normalized = text.replace(',', '.');
+    if (/^\d*\.?\d{0,2}$/.test(normalized)) {
+      setAmount(normalized);
+      if (amountError) setAmountError(null);
+    }
+  };
+
+  /**
+   * Control 3.c: La descripción solo admite letras, números y espacios.
+   * Filtra caracteres especiales y limita a 400 caracteres.
+   */
+  const handleDescriptionChange = (text: string) => {
+    const sanitized = text.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑüÜ\s]/g, '');
+    if (sanitized.length <= 400) {
+      setDescription(sanitized);
+    }
+  };
+
+  const handleSelectCategory = (cat: Category) => {
+    setCategory(cat);
+    if (categoryError) setCategoryError(null);
+  };
+
+  const handleDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
+    setShowDatePicker(Platform.OS === 'ios');
+    if (selectedDate) {
+      setDate(selectedDate);
+    }
+  };
+
+  // 📷 Tomar foto con la cámara
+  const handleTakePhoto = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert(
+        'Permiso de Cámara Requerido',
+        'Necesitamos acceso a tu cámara para tomar la foto del comprobante.'
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      quality: 0.7,
+    });
+
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      setReceiptUri(result.assets[0].uri);
+    }
+  };
+
+  // 🖼️ Elegir foto desde la galería
+  const handlePickFromGallery = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert(
+        'Permiso de Galería Requerido',
+        'Necesitamos acceso a tus fotos para adjuntar el comprobante.'
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      quality: 0.7,
+    });
+
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      setReceiptUri(result.assets[0].uri);
+    }
+  };
+
+  const handleAttachReceipt = () => {
+    Alert.alert(
+      'Adjuntar Factura o Comprobante',
+      '¿Cómo deseas agregar el comprobante?',
+      [
+        {
+          text: '📷 Tomar Foto',
+          onPress: handleTakePhoto,
+        },
+        {
+          text: '🖼️ Galería de Fotos',
+          onPress: handlePickFromGallery,
+        },
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+        },
+      ]
+    );
+  };
+
+  const handleSubmit = async () => {
+    const parsedAmount = parseFloat(amount);
+    if (!amount.trim() || isNaN(parsedAmount) || parsedAmount <= 0) {
+      setAmountError('El monto es obligatorio y debe ser mayor a 0 (máx. 2 decimales).');
+      Alert.alert(
+        'Monto Obligatorio',
+        'Por favor ingresa un monto numérico válido mayor a 0 con hasta dos decimales (ej: 15.50).'
+      );
+      return;
+    }
+
+    if (!category) {
+      setCategoryError('La categoría es obligatoria.');
+      Alert.alert(
+        'Categoría Obligatoria',
+        'Debes seleccionar una categoría para poder registrar el gasto.'
+      );
+      return;
+    }
+
     try {
-      await addExpense({
-        amount: parseFloat(amount),
-        category,
-        date: new Date(),
-        description: description.trim() || undefined,
-      });
+      if (expenseToEdit) {
+        await updateExpense({
+          ...expenseToEdit,
+          amount: parsedAmount,
+          category,
+          date,
+          description: description.trim() || undefined,
+          receiptUri,
+        });
+      } else {
+        await addExpense({
+          amount: parsedAmount,
+          category,
+          date,
+          description: description.trim() || undefined,
+          receiptUri,
+        });
+      }
     } catch (error) {
-      // Si no se pudo guardar, se avisa y el modal queda abierto con los datos
       console.error('Error al guardar el gasto', error);
       Alert.alert('Error', 'No se pudo guardar el gasto. Intenta de nuevo.');
       return;
     }
- 
-    // Reset form
-    setAmount('');
-    setCategory(null);
-    setDescription('');
-    onClose();
+
+    handleClose();
   };
 
-
-  // Igual que al guardar, se limpia el formulario para que no quede texto viejo
-  const handleClose = () => {
-    setAmount('');
-    setCategory(null);
-    setDescription('');
-    onClose();
-  };
+  const isEditing = Boolean(expenseToEdit);
 
   return (
     <Modal
@@ -80,7 +237,6 @@ const handleSubmit = async () => {
         style={styles.modalOverlay}
         keyboardVerticalOffset={0}
       >
-        {/* Tocar el fondo tambien cierra el modal */}
         <TouchableOpacity
           style={styles.backdrop}
           activeOpacity={1}
@@ -104,39 +260,88 @@ const handleSubmit = async () => {
                 keyboardShouldPersistTaps="handled"
                 contentContainerStyle={styles.scrollContent}
               >
-                <Text style={styles.title}>Agregar Gasto</Text>
+                <Text style={styles.title}>
+                  {isEditing ? 'Editar Gasto' : 'Agregar Gasto'}
+                </Text>
 
+                {/* Campo Monto (Control 3.a) */}
                 <View style={styles.inputSection}>
-                  <Text style={styles.label}>Monto (USD)</Text>
-                  <View style={styles.inputContainer}>
+                  <Text style={styles.label}>Monto (USD) *</Text>
+                  <View
+                    style={[
+                      styles.inputContainer,
+                      amountError ? styles.inputContainerError : null,
+                    ]}
+                  >
                     <Text style={styles.currencySymbol}>$</Text>
                     <TextInput
                       style={styles.input}
                       value={amount}
-                      onChangeText={setAmount}
+                      onChangeText={handleAmountChange}
                       placeholder="0.00"
                       keyboardType="decimal-pad"
                       placeholderTextColor={LiquidGlassColors.glassTextSecondary}
                     />
                   </View>
+                  {amountError ? (
+                    <Text style={styles.errorText}>{amountError}</Text>
+                  ) : null}
                 </View>
 
+                {/* Campo Fecha (Obligatorio) */}
                 <View style={styles.inputSection}>
-                  <Text style={styles.label}>Categoría</Text>
+                  <Text style={styles.label}>Fecha del Gasto *</Text>
+                  <TouchableOpacity
+                    style={styles.datePickerButton}
+                    onPress={() => setShowDatePicker(true)}
+                  >
+                    <Text style={styles.datePickerIcon}>📅</Text>
+                    <Text style={styles.datePickerText}>
+                      {date.toLocaleDateString('es-ES', {
+                        weekday: 'short',
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                      })}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {showDatePicker && (
+                    <DateTimePicker
+                      value={date}
+                      mode="date"
+                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                      onChange={handleDateChange}
+                      maximumDate={new Date()}
+                    />
+                  )}
+                </View>
+
+                {/* Campo Categoría (Control 3.b) */}
+                <View style={styles.inputSection}>
+                  <View style={styles.labelRow}>
+                    <Text style={styles.label}>Categoría *</Text>
+                    {categoryError ? (
+                      <Text style={styles.errorTextInline}>
+                        * {categoryError}
+                      </Text>
+                    ) : null}
+                  </View>
+
                   <ScrollView
                     horizontal
                     showsHorizontalScrollIndicator={false}
                     style={styles.categoriesScroll}
                     contentContainerStyle={styles.categoriesContent}
                   >
-                    {/* La elegida se pinta con el gradiente */}
                     {CATEGORIES.map((cat) => (
                       <TouchableOpacity
                         key={cat}
-                        onPress={() => setCategory(cat)}
+                        onPress={() => handleSelectCategory(cat)}
                         style={[
                           styles.categoryButton,
                           category === cat && styles.categoryButtonActive,
+                          categoryError && !category && styles.categoryButtonHighlight,
                         ]}
                       >
                         {category === cat ? (
@@ -167,18 +372,53 @@ const handleSubmit = async () => {
                   </ScrollView>
                 </View>
 
+                {/* Campo Descripción (Control 3.c) */}
                 <View style={styles.inputSection}>
-                  <Text style={styles.label}>Descripción (opcional)</Text>
+                  <View style={styles.labelRow}>
+                    <Text style={styles.label}>Descripción (opcional)</Text>
+                    <Text style={styles.charCounter}>{description.length}/400</Text>
+                  </View>
                   <TextInput
                     style={[styles.input, styles.descriptionInput]}
                     value={description}
-                    onChangeText={setDescription}
-                    placeholder="Ej: Almuerzo, transporte a la universidad..."
+                    onChangeText={handleDescriptionChange}
+                    maxLength={400}
+                    placeholder="Solo letras y números (ej: Almuerzo universitario)"
                     placeholderTextColor={LiquidGlassColors.glassTextSecondary}
                     multiline
                   />
+                  <Text style={styles.helperText}>
+                    * Solo letras y números. Máximo 400 caracteres.
+                  </Text>
                 </View>
 
+                {/* Campo Factura / Comprobante */}
+                <View style={styles.inputSection}>
+                  <Text style={styles.label}>Factura o Comprobante (opcional)</Text>
+                  {receiptUri ? (
+                    <View style={styles.imagePreviewContainer}>
+                      <Image source={{ uri: receiptUri }} style={styles.imagePreview} />
+                      <TouchableOpacity
+                        style={styles.removeImageButton}
+                        onPress={() => setReceiptUri(undefined)}
+                      >
+                        <Text style={styles.removeImageText}>✕ Quitar Comprobante</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.attachButton}
+                      onPress={handleAttachReceipt}
+                    >
+                      <Text style={styles.attachButtonIcon}>🧾</Text>
+                      <Text style={styles.attachButtonText}>
+                        Adjuntar foto o factura
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* Botones de Acción */}
                 <View style={styles.buttonContainer}>
                   <TouchableOpacity
                     style={styles.cancelButton}
@@ -188,12 +428,8 @@ const handleSubmit = async () => {
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={[
-                      styles.submitButton,
-                      (!amount || !category) && styles.submitButtonDisabled,
-                    ]}
+                    style={styles.submitButton}
                     onPress={handleSubmit}
-                    disabled={!amount || !category}
                   >
                     <LinearGradient
                       colors={[LiquidGlassColors.primary, LiquidGlassColors.secondary]}
@@ -201,7 +437,9 @@ const handleSubmit = async () => {
                       end={{ x: 1, y: 1 }}
                       style={styles.submitGradient}
                     >
-                      <Text style={styles.submitButtonText}>Agregar</Text>
+                      <Text style={styles.submitButtonText}>
+                        {isEditing ? 'Actualizar' : 'Agregar'}
+                      </Text>
                     </LinearGradient>
                   </TouchableOpacity>
                 </View>
@@ -229,10 +467,10 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: Spacing.four,
     borderTopRightRadius: Spacing.four,
     overflow: 'hidden',
-    maxHeight: '80%',
+    maxHeight: '90%',
   },
   modalBackground: {
-    // Bajito a proposito: si es casi opaco no se ve el blur del fondo
+    // DESIGN_SYSTEM: poca opacidad (~0.45) para lucir el efecto glass del fondo
     backgroundColor: 'rgba(255, 255, 255, 0.45)',
     borderTopLeftRadius: Spacing.four,
     borderTopRightRadius: Spacing.four,
@@ -263,22 +501,53 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.four,
   },
   inputSection: {
-    marginBottom: Spacing.four,
+    marginBottom: Spacing.three,
+  },
+  labelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.two,
   },
   label: {
     fontSize: 14,
     fontWeight: '600',
     color: LiquidGlassColors.glassText,
-    marginBottom: Spacing.two,
+    marginBottom: Spacing.one,
+  },
+  charCounter: {
+    fontSize: 12,
+    color: LiquidGlassColors.glassTextSecondary,
+    fontWeight: '500',
+  },
+  helperText: {
+    fontSize: 11,
+    color: LiquidGlassColors.glassTextSecondary,
+    marginTop: Spacing.one,
+  },
+  errorText: {
+    fontSize: 12,
+    color: LiquidGlassColors.danger,
+    fontWeight: '600',
+    marginTop: Spacing.one,
+  },
+  errorTextInline: {
+    fontSize: 12,
+    color: LiquidGlassColors.danger,
+    fontWeight: '600',
   },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    backgroundColor: LiquidGlassColors.glassInput,
     borderRadius: Spacing.two,
     borderWidth: 1,
     borderColor: LiquidGlassColors.glassBorder,
     paddingHorizontal: Spacing.three,
+  },
+  inputContainerError: {
+    borderColor: LiquidGlassColors.danger,
+    backgroundColor: LiquidGlassColors.dangerBackground,
   },
   currencySymbol: {
     fontSize: 24,
@@ -293,13 +562,32 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.three,
   },
   descriptionInput: {
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    backgroundColor: LiquidGlassColors.glassInput,
     borderRadius: Spacing.two,
     borderWidth: 1,
     borderColor: LiquidGlassColors.glassBorder,
     paddingHorizontal: Spacing.three,
-    minHeight: 80,
+    minHeight: 70,
     textAlignVertical: 'top',
+  },
+  datePickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: LiquidGlassColors.glassInput,
+    borderRadius: Spacing.two,
+    borderWidth: 1,
+    borderColor: LiquidGlassColors.glassBorder,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.three,
+  },
+  datePickerIcon: {
+    fontSize: 18,
+    marginRight: Spacing.two,
+  },
+  datePickerText: {
+    fontSize: 16,
+    color: LiquidGlassColors.glassText,
+    fontWeight: '500',
   },
   categoriesScroll: {
     marginHorizontal: -Spacing.two,
@@ -309,7 +597,7 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   categoryButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    backgroundColor: LiquidGlassColors.glassInput,
     borderRadius: Spacing.two,
     borderWidth: 1,
     borderColor: LiquidGlassColors.glassBorder,
@@ -320,6 +608,10 @@ const styles = StyleSheet.create({
   categoryButtonActive: {
     borderColor: 'transparent',
   },
+  categoryButtonHighlight: {
+    borderColor: LiquidGlassColors.danger,
+    backgroundColor: LiquidGlassColors.dangerBackground,
+  },
   categoryGradient: {
     padding: Spacing.two,
     borderRadius: Spacing.two,
@@ -327,7 +619,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   categoryIcon: {
-    fontSize: 24,
+    fontSize: 22,
     marginBottom: Spacing.one,
   },
   categoryText: {
@@ -341,6 +633,50 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
   },
+  attachButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: LiquidGlassColors.glassInput,
+    borderRadius: Spacing.two,
+    borderWidth: 1,
+    borderColor: LiquidGlassColors.glassBorder,
+    borderStyle: 'dashed',
+    paddingVertical: Spacing.three,
+    gap: Spacing.two,
+  },
+  attachButtonIcon: {
+    fontSize: 20,
+  },
+  attachButtonText: {
+    fontSize: 15,
+    color: LiquidGlassColors.primary,
+    fontWeight: '600',
+  },
+  imagePreviewContainer: {
+    alignItems: 'center',
+    gap: Spacing.two,
+    backgroundColor: LiquidGlassColors.glassInput,
+    padding: Spacing.two,
+    borderRadius: Spacing.two,
+    borderWidth: 1,
+    borderColor: LiquidGlassColors.glassBorder,
+  },
+  imagePreview: {
+    width: '100%',
+    height: 160,
+    borderRadius: Spacing.two,
+    resizeMode: 'cover',
+  },
+  removeImageButton: {
+    paddingVertical: Spacing.one,
+    paddingHorizontal: Spacing.two,
+  },
+  removeImageText: {
+    color: LiquidGlassColors.danger,
+    fontSize: 13,
+    fontWeight: '600',
+  },
   buttonContainer: {
     flexDirection: 'row',
     gap: Spacing.two,
@@ -348,7 +684,7 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    backgroundColor: LiquidGlassColors.glassInput,
     borderRadius: Spacing.two,
     borderWidth: 1,
     borderColor: LiquidGlassColors.glassBorder,
@@ -364,9 +700,6 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: Spacing.two,
     overflow: 'hidden',
-  },
-  submitButtonDisabled: {
-    opacity: 0.5,
   },
   submitGradient: {
     paddingVertical: Spacing.three,
